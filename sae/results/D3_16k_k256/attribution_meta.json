@@ -1,0 +1,20 @@
+{
+  "decoder_weight_shape": [
+    4096,
+    16384
+  ],
+  "V_shape": [
+    4096,
+    10
+  ],
+  "alignment_shape": [
+    16384,
+    10
+  ],
+  "n_test_embeddings_used": 5218,
+  "top_n_per_sign": 50,
+  "note": "alignment_ij = decoder_column_i \u00b7 V[:, j]; contribution uses mean |z_i| on test",
+  "V_column_norms_note": "PART2_K10_seed42 V columns are not unit-norm (~1.4e3); raw alignment = decoder_i \u00b7 V[:,j] is large but ranking per basis is invariant to V_j scale.",
+  "ranking_note": "Top 50 pos/neg per basis by alignment only (not by contribution). Attribution is geometric, not causal.",
+  "formula": "alignment_ij = decoder.weight[:,i] \u00b7 V[:,j]; mean_abs_contribution_ij = mean(|z_i|) * |alignment_ij| on test"
+}

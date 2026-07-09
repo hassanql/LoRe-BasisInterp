@@ -1,0 +1,53 @@
+{
+  "decoder_norm_max": 1.0000014305114746,
+  "decoder_norm_mean": 1.0,
+  "decoder_norm_min": 0.9999983906745911,
+  "decoder_norm_std": 4.1870330846904835e-07,
+  "splits": [
+    {
+      "average_active_features": 255.9404984423676,
+      "dead_feature_rate": 0.00604248046875,
+      "dead_features": 99,
+      "dict_size": 16384,
+      "gini_activation_frequency_all": 0.9332715272903442,
+      "gini_activation_frequency_live": 0.9328658580780029,
+      "k": 256,
+      "live_features": 16285,
+      "max_activation_count": 40084,
+      "median_activation_count": 18.0,
+      "n_examples": 41730,
+      "sparsity_mode": "topk",
+      "split": "train"
+    },
+    {
+      "average_active_features": 255.9723926380368,
+      "dead_feature_rate": 0.35174560546875,
+      "dead_features": 5763,
+      "dict_size": 16384,
+      "gini_activation_frequency_all": 0.941185712814331,
+      "gini_activation_frequency_live": 0.9092727899551392,
+      "k": 256,
+      "live_features": 10621,
+      "max_activation_count": 5008,
+      "median_activation_count": 2.0,
+      "n_examples": 5216,
+      "sparsity_mode": "topk",
+      "split": "val"
+    },
+    {
+      "average_active_features": 255.98486009965504,
+      "dead_feature_rate": 0.348876953125,
+      "dead_features": 5716,
+      "dict_size": 16384,
+      "gini_activation_frequency_all": 0.9411181211471558,
+      "gini_activation_frequency_live": 0.9095685482025146,
+      "k": 256,
+      "live_features": 10668,
+      "max_activation_count": 4986,
+      "median_activation_count": 2.0,
+      "n_examples": 5218,
+      "sparsity_mode": "topk",
+      "split": "test"
+    }
+  ]
+}
