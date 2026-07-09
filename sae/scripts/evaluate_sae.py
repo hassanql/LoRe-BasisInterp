@@ -97,6 +97,54 @@ def pairwise_scores(
     return torch.stack(original_scores), torch.stack(reconstructed_scores)
 
 
+def personalized_lore_accuracy(
+    x: torch.Tensor,
+    x_hat: torch.Tensor,
+    metadata: list[dict],
+    basis_v: torch.Tensor,
+    user_w: torch.Tensor,
+    split: str,
+) -> tuple[float, float, int]:
+    kept_mask = user_w.max(dim=0).values >= 1e-2
+    basis_kept = basis_v[:, kept_mask]
+    weights_kept = user_w[:, kept_mask]
+
+    train_seen_users = sorted(
+        {
+            row["user_id"]
+            for row in metadata
+            if row["source_split"] == "train" and row["is_seen_user"] is True
+        }
+    )
+    user_to_row = {user_id: idx for idx, user_id in enumerate(train_seen_users)}
+
+    by_pair: dict[str, dict[str, int | str]] = defaultdict(dict)
+    for row in metadata:
+        if row["sae_split"] == split and row["user_id"] in user_to_row:
+            by_pair[row["pair_id"]][row["response_role"]] = row["sae_split_index"]
+            by_pair[row["pair_id"]]["user_id"] = row["user_id"]
+
+    original_correct = []
+    reconstructed_correct = []
+    for roles in by_pair.values():
+        if "chosen" not in roles or "rejected" not in roles or "user_id" not in roles:
+            continue
+        user_idx = user_to_row[str(roles["user_id"])]
+        reward_direction = basis_kept @ weights_kept[user_idx]
+        d_pair = x[int(roles["chosen"])] - x[int(roles["rejected"])]
+        d_pair_hat = x_hat[int(roles["chosen"])] - x_hat[int(roles["rejected"])]
+        original_correct.append(float((d_pair @ reward_direction) > 0))
+        reconstructed_correct.append(float((d_pair_hat @ reward_direction) > 0))
+
+    if not original_correct:
+        return float("nan"), float("nan"), 0
+    return (
+        float(torch.tensor(original_correct).mean().item()),
+        float(torch.tensor(reconstructed_correct).mean().item()),
+        len(original_correct),
+    )
+
+
 def main() -> int:
     args = parse_args()
     data_dir = Path(args.data_dir)
@@ -117,7 +165,9 @@ def main() -> int:
     x_hat, z = reconstruct(model, x, args.batch_size, device)
 
     matrices = torch.load(args.basis_matrices, map_location="cpu")
-    basis_v = matrices[args.run_key]["V"].float()
+    run_data = matrices[args.run_key]
+    basis_v = run_data["V"].float()
+    user_w = run_data["W"].float()
 
     original_scores = x @ basis_v
     reconstructed_scores = x_hat @ basis_v
@@ -130,6 +180,14 @@ def main() -> int:
     pair_scores, pair_scores_hat = pairwise_scores(x, x_hat, metadata, basis_v, args.split)
     pair_pearson = pearson_corr_by_column(pair_scores, pair_scores_hat)
     pair_spearman = spearman_corr_by_column(pair_scores, pair_scores_hat)
+    original_acc, reconstructed_acc, accuracy_pair_count = personalized_lore_accuracy(
+        x,
+        x_hat,
+        metadata,
+        basis_v,
+        user_w,
+        args.split,
+    )
 
     active_counts = active_feature_counts(z)
     activation_frequency = (z != 0).float().mean(dim=0)
@@ -150,6 +208,10 @@ def main() -> int:
         "min_basis_score_pearson": float(pearson.min().item()),
         "mean_pair_score_pearson": float(pair_pearson.mean().item()),
         "min_pair_score_pearson": float(pair_pearson.min().item()),
+        "lore_accuracy_original": original_acc,
+        "lore_accuracy_reconstructed": reconstructed_acc,
+        "lore_accuracy_drop": original_acc - reconstructed_acc,
+        "lore_accuracy_pair_count": accuracy_pair_count,
     }
     write_json(results_dir / "sae_eval_summary.json", summary)
 
