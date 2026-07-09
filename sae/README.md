@@ -329,6 +329,24 @@ sae/results/activation_stats.csv
 Small final CSVs can be committed if the team agrees. Raw activations should not
 be committed.
 
+### `diagnose_sae.py`
+
+Inspect feature usage before any labeling work.
+
+Required outputs:
+
+```text
+sae/results/sae_diagnostics_summary.json
+sae/results/top_active_features.csv
+```
+
+Diagnostics should report:
+
+- live and dead feature counts per split;
+- top active features per split;
+- activation frequency and mean active value;
+- decoder feature norm statistics.
+
 ### `analyze_basis_features.py`
 
 Estimate which SAE features contribute most to each LoRe basis.
