@@ -115,10 +115,13 @@ def main() -> int:
 
     checkpoint = torch.load(args.checkpoint, map_location="cpu")
     config = checkpoint["config"]
+    train_cfg = config.get("training", {})
     model = TopKSAE(
         input_dim=int(config["input_dim"]),
         dict_size=int(config["dict_size"]),
         k=int(config["k"]),
+        normalize_decoder=bool(train_cfg.get("normalize_decoder", True)),
+        aux_k=int(train_cfg.get("aux_k", config["k"])),
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)

@@ -198,21 +198,41 @@ explicitly agrees.
 
 ## Baseline SAE
 
-Start with a simple TopK SAE.
+Start with a simple TopK SAE, then use the improved training recipe if dead
+features collapse.
 
-Initial baseline:
+### Improved default (`sae/configs/topk_sae_baseline.yaml`)
 
 ```yaml
 input_dim: 4096
 architecture: topk_sae
-dict_size: 16384
-k: 64
-loss: reconstruction_mse
+dict_size: 4096
+k: 32
+loss: reconstruction_mse_plus_aux_dead
 train_data: chosen_plus_rejected_embeddings
 canonical_lore_run_key: PART2_K10_seed42
 ```
 
-This is the first baseline, not the final claim.
+Training knobs included in this config:
+
+- unit-norm decoder columns after each step;
+- input centering via pre-encoder bias initialized from the train mean;
+- auxiliary TopK reconstruction on dead features (`aux_k_coef`);
+- longer default schedule (`max_steps: 20000`).
+
+### Large-dictionary control (`sae/configs/topk_sae_large.yaml`)
+
+```yaml
+dict_size: 16384
+k: 64
+```
+
+Use this after dead-feature rate is under control. The original Phase 2 full-A100
+run used 16384/64 without aux/unit-norm and collapsed to ~130 live features.
+
+This is still a baseline family, not the final claim.
+
+See also `sae/GCP_A100_RUNBOOK.md` for VM start/stop and train commands.
 
 ## Script Responsibilities
 
