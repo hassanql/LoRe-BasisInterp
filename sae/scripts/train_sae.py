@@ -193,6 +193,50 @@ def main() -> int:
                     dead_rate = float((act_freq_ema < dead_threshold).float().mean().item())
                     live_features = int((act_freq_ema >= dead_threshold).sum().item())
 
+                early_abort_step = int(train_cfg.get("early_abort_step", 2000))
+                early_abort_dead = float(train_cfg.get("early_abort_dead_rate", 0.9))
+                if step == early_abort_step and dead_rate > early_abort_dead:
+                    print(
+                        f"EARLY_ABORT step={step} dead={dead_rate:.4f} live={live_features} "
+                        f"(threshold dead>{early_abort_dead})"
+                    )
+                    writer.writerow(
+                        {
+                            "step": step,
+                            "train_mse": float(out["recon_mse"].item()),
+                            "train_aux_mse": float(out["aux_mse"].item()),
+                            "train_basis_mse": float(out["basis_mse"].item()),
+                            "train_loss": float(out["loss"].item()),
+                            "dead_feature_rate": dead_rate,
+                            "live_features": live_features,
+                            "val_mse": "",
+                            "val_explained_variance": "",
+                        }
+                    )
+                    f.flush()
+                    torch.save(
+                        {
+                            "model_state_dict": model.state_dict(),
+                            "config": config,
+                            "step": step,
+                            "act_freq_ema": act_freq_ema.detach().cpu(),
+                            "early_abort": True,
+                            "early_abort_dead_rate": dead_rate,
+                        },
+                        ckpt_path,
+                    )
+                    write_json(
+                        results_dir / "early_abort.json",
+                        {
+                            "step": step,
+                            "dead_feature_rate": dead_rate,
+                            "live_features": live_features,
+                            "threshold": early_abort_dead,
+                        },
+                    )
+                    print(f"wrote early-abort checkpoint to {ckpt_path}")
+                    return 2
+
                 should_eval = step == 1 or step % eval_every == 0 or step == max_steps
                 should_log = step == 1 or step % log_every == 0 or should_eval
                 val_mse = ""

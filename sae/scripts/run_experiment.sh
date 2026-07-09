@@ -17,6 +17,7 @@ CKPT_DIR="sae/checkpoints/${RUN_NAME}"
 mkdir -p "$RESULTS" "$CKPT_DIR"
 
 echo "=== TRAIN ${RUN_NAME} ==="
+set +e
 python sae/scripts/train_sae.py \
   --config "$CONFIG" \
   --checkpoint-dir "$CKPT_DIR" \
@@ -24,6 +25,17 @@ python sae/scripts/train_sae.py \
   --checkpoint-name model.pt \
   --device cuda \
   2>&1 | tee "$RESULTS/train.log"
+train_rc=${PIPESTATUS[0]}
+set -e
+if [[ "$train_rc" -eq 2 ]]; then
+  echo "=== EARLY_ABORT ${RUN_NAME} (severe collapse) — skipping eval ==="
+  echo "{\"run\":\"${RUN_NAME}\",\"status\":\"early_abort\"}" > "$RESULTS/comparison_row.json"
+  echo "=== DONE ${RUN_NAME} (failed) ==="
+  exit 0
+elif [[ "$train_rc" -ne 0 ]]; then
+  echo "=== TRAIN FAILED ${RUN_NAME} rc=${train_rc} ==="
+  exit "$train_rc"
+fi
 
 echo "=== EVAL ${RUN_NAME} ==="
 python sae/scripts/evaluate_sae.py \
