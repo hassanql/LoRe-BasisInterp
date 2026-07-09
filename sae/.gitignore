@@ -1,0 +1,12 @@
+# Generated SAE artifacts
+data/
+checkpoints/
+wandb/
+results/*.pt
+results/*.pkl
+results/*activations*
+results/*top_examples*
+*.ckpt
+*.pth
+__pycache__/
+*.py[cod]
