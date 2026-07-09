@@ -26,3 +26,50 @@ def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+    with Path(path).open(encoding="utf-8") as f:
+        return [json.loads(line) for line in f]
+
+
+def _parse_scalar(value: str) -> Any:
+    value = value.strip()
+    if value in {"true", "True"}:
+        return True
+    if value in {"false", "False"}:
+        return False
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def read_simple_yaml(path: str | Path) -> dict[str, Any]:
+    """Read the small YAML subset used by SAE config files."""
+    root: dict[str, Any] = {}
+    current_section: dict[str, Any] | None = None
+    for raw_line in Path(path).read_text().splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line:
+            continue
+        if not raw_line.startswith(" "):
+            key, value = line.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if value:
+                root[key] = _parse_scalar(value)
+                current_section = None
+            else:
+                current_section = {}
+                root[key] = current_section
+        else:
+            if current_section is None:
+                raise ValueError(f"nested config value without a section: {raw_line}")
+            key, value = line.split(":", 1)
+            current_section[key.strip()] = _parse_scalar(value)
+    return root
