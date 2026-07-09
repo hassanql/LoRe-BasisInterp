@@ -17,6 +17,7 @@ REPO_ROOT = SAE_DIR.parent
 sys.path.append(str(REPO_ROOT))
 
 from sae.src.io import ensure_dir, write_json  # noqa: E402
+from sae.src.metrics import gini_coefficient  # noqa: E402
 from sae.src.topk_sae import TopKSAE  # noqa: E402
 
 
@@ -77,17 +78,23 @@ def collect_split_stats(
 
     live_mask = activation_counts > 0
     dead_features = int((~live_mask).sum().item())
+    freq = activation_counts.float() / max(1, n_examples)
+    gini_all = gini_coefficient(freq)
+    gini_live = gini_coefficient(freq[live_mask]) if bool(live_mask.any()) else float("nan")
     stats = {
         "split": split,
         "n_examples": n_examples,
         "dict_size": model.dict_size,
         "k": model.k,
+        "sparsity_mode": model.sparsity_mode,
         "average_active_features": active_per_example_sum / max(1, n_examples),
         "live_features": int(live_mask.sum().item()),
         "dead_features": dead_features,
         "dead_feature_rate": dead_features / model.dict_size,
         "max_activation_count": int(activation_counts.max().item()),
         "median_activation_count": float(torch.median(activation_counts.float()).item()),
+        "gini_activation_frequency_all": gini_all,
+        "gini_activation_frequency_live": gini_live,
     }
 
     rows = []
@@ -122,6 +129,7 @@ def main() -> int:
         k=int(config["k"]),
         normalize_decoder=bool(train_cfg.get("normalize_decoder", True)),
         aux_k=int(train_cfg.get("aux_k", config["k"])),
+        sparsity_mode=str(train_cfg.get("sparsity_mode", "topk")),
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)

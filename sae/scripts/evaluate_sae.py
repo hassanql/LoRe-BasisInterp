@@ -21,6 +21,7 @@ from sae.src.io import ensure_dir, read_jsonl, write_json  # noqa: E402
 from sae.src.metrics import (  # noqa: E402
     active_feature_counts,
     explained_variance,
+    gini_coefficient,
     pearson_corr_by_column,
     reconstruction_mse,
     spearman_corr_by_column,
@@ -160,6 +161,7 @@ def main() -> int:
         k=int(config["k"]),
         normalize_decoder=bool(train_cfg.get("normalize_decoder", True)),
         aux_k=int(train_cfg.get("aux_k", config["k"])),
+        sparsity_mode=str(train_cfg.get("sparsity_mode", "topk")),
     )
     model.load_state_dict(checkpoint["model_state_dict"])
     model.to(device)
@@ -194,12 +196,20 @@ def main() -> int:
 
     active_counts = active_feature_counts(z)
     activation_frequency = (z != 0).float().mean(dim=0)
+    live_mask = activation_frequency > 0
+    gini_all = gini_coefficient(activation_frequency)
+    gini_live = (
+        gini_coefficient(activation_frequency[live_mask])
+        if bool(live_mask.any())
+        else float("nan")
+    )
     summary = {
         "split": args.split,
         "n_embeddings": int(x.shape[0]),
         "input_dim": int(x.shape[1]),
         "dict_size": int(config["dict_size"]),
         "k": int(config["k"]),
+        "sparsity_mode": str(train_cfg.get("sparsity_mode", "topk")),
         "mse": float(reconstruction_mse(x, x_hat).item()),
         "explained_variance": float(explained_variance(x, x_hat).item()),
         "mean_embedding_norm": float(torch.linalg.norm(x, dim=1).mean().item()),
@@ -207,6 +217,9 @@ def main() -> int:
         "mean_reconstruction_error_norm": float(torch.linalg.norm(x - x_hat, dim=1).mean().item()),
         "average_active_features": float(active_counts.float().mean().item()),
         "dead_feature_rate": float((activation_frequency == 0).float().mean().item()),
+        "live_features": int(live_mask.sum().item()),
+        "gini_activation_frequency_all": gini_all,
+        "gini_activation_frequency_live": gini_live,
         "mean_basis_score_pearson": float(pearson.mean().item()),
         "min_basis_score_pearson": float(pearson.min().item()),
         "mean_pair_score_pearson": float(pair_pearson.mean().item()),

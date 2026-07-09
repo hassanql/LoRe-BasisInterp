@@ -1,4 +1,4 @@
-"""TopK SAE model implementation with dead-feature revival support."""
+"""TopK / BatchTopK SAE with dead-feature revival and optional LoRe basis loss."""
 
 from __future__ import annotations
 
@@ -8,13 +8,15 @@ from torch import nn
 
 
 class TopKSAE(nn.Module):
-    """ReLU TopK sparse autoencoder for dense reward-model embeddings.
+    """Sparse autoencoder for dense reward-model embeddings.
 
-    Improvements over the original baseline:
+    Supports:
+    - per-example TopK or BatchTopK sparsity
     - learnable pre-encoder bias (input centering)
     - unit-norm decoder columns
     - encoder initialized as the decoder transpose
     - auxiliary TopK reconstruction on dead features
+    - optional LoRe basis-score preservation loss
     """
 
     def __init__(
@@ -25,16 +27,19 @@ class TopKSAE(nn.Module):
         *,
         normalize_decoder: bool = True,
         aux_k: int | None = None,
+        sparsity_mode: str = "topk",
     ):
         super().__init__()
         if not 0 < k <= dict_size:
             raise ValueError("k must be between 1 and dict_size")
+        if sparsity_mode not in {"topk", "batch_topk"}:
+            raise ValueError(f"unknown sparsity_mode: {sparsity_mode}")
         self.input_dim = input_dim
         self.dict_size = dict_size
         self.k = k
         self.normalize_decoder = normalize_decoder
-        # Aux path uses up to k dead features by default (capped by live dead count).
         self.aux_k = aux_k if aux_k is not None else k
+        self.sparsity_mode = sparsity_mode
 
         self.b_pre = nn.Parameter(torch.zeros(input_dim))
         self.encoder = nn.Linear(input_dim, dict_size, bias=True)
@@ -71,7 +76,7 @@ class TopKSAE(nn.Module):
 
     def encode(self, x: torch.Tensor) -> torch.Tensor:
         pre_acts = self.encode_pre_acts(x)
-        return self._topk_activate(pre_acts, self.k)
+        return self._activate(pre_acts, self.k)
 
     def decode(self, z: torch.Tensor) -> torch.Tensor:
         return self.decoder(z) + self.b_pre
@@ -87,10 +92,12 @@ class TopKSAE(nn.Module):
         *,
         dead_mask: torch.Tensor | None = None,
         aux_k_coef: float = 0.0,
+        basis_v: torch.Tensor | None = None,
+        basis_score_coef: float = 0.0,
     ) -> dict[str, torch.Tensor]:
-        """Forward pass returning reconstruction and optional aux dead-feature loss."""
+        """Forward pass with recon, optional dead-feature aux, optional basis-score loss."""
         pre_acts = self.encode_pre_acts(x)
-        z = self._topk_activate(pre_acts, self.k)
+        z = self._activate(pre_acts, self.k)
         x_hat = self.decode(z)
         recon_mse = F.mse_loss(x_hat, x)
 
@@ -98,28 +105,59 @@ class TopKSAE(nn.Module):
         if aux_k_coef > 0.0 and dead_mask is not None and bool(dead_mask.any()):
             residual = (x - x_hat).detach()
             aux_latent = self._topk_activate_masked(pre_acts, dead_mask, self.aux_k)
-            # Aux path reconstructs residual only (no b_pre), so dead features re-enter.
             aux_recon = self.decoder(aux_latent)
             aux_mse = F.mse_loss(aux_recon, residual)
 
-        total = recon_mse + aux_k_coef * aux_mse
+        basis_mse = x.new_zeros(())
+        if basis_score_coef > 0.0 and basis_v is not None:
+            # Preserve LoRe scores: dot(V[:, j], e) ≈ dot(V[:, j], e_hat)
+            original_scores = x @ basis_v
+            recon_scores = x_hat @ basis_v
+            basis_mse = F.mse_loss(recon_scores, original_scores)
+
+        total = recon_mse + aux_k_coef * aux_mse + basis_score_coef * basis_mse
         return {
             "x_hat": x_hat,
             "z": z,
             "pre_acts": pre_acts,
             "recon_mse": recon_mse,
             "aux_mse": aux_mse,
+            "basis_mse": basis_mse,
             "loss": total,
         }
 
+    def _activate(self, pre_acts: torch.Tensor, k: int) -> torch.Tensor:
+        if self.sparsity_mode == "batch_topk":
+            return self._batch_topk_activate(pre_acts, k)
+        return self._topk_activate(pre_acts, k)
+
     @staticmethod
     def _topk_activate(pre_acts: torch.Tensor, k: int) -> torch.Tensor:
+        """Per-example TopK then ReLU."""
         k = min(k, pre_acts.shape[-1])
         values, indices = torch.topk(pre_acts, k=k, dim=-1)
         values = F.relu(values)
         sparse = torch.zeros_like(pre_acts)
         sparse.scatter_(dim=-1, index=indices, src=values)
         return sparse
+
+    @staticmethod
+    def _batch_topk_activate(pre_acts: torch.Tensor, k: int) -> torch.Tensor:
+        """BatchTopK: keep top (batch_size * k) activations across the whole batch.
+
+        Average active features per example is approximately k, but individual
+        examples may use fewer or more features.
+        """
+        batch_size, dict_size = pre_acts.shape
+        pre = F.relu(pre_acts)
+        flat = pre.reshape(-1)
+        n_keep = min(batch_size * k, flat.numel())
+        if n_keep <= 0:
+            return torch.zeros_like(pre_acts)
+        values, indices = torch.topk(flat, k=n_keep)
+        sparse_flat = torch.zeros_like(flat)
+        sparse_flat.scatter_(0, indices, values)
+        return sparse_flat.view(batch_size, dict_size)
 
     @staticmethod
     def _topk_activate_masked(

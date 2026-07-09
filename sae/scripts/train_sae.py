@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train the baseline / improved TopK SAE."""
+"""Train TopK / BatchTopK SAE with optional dead-feature and basis-score losses."""
 
 from __future__ import annotations
 
@@ -27,12 +27,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-dir", default=None)
     parser.add_argument("--checkpoint-dir", default="sae/checkpoints")
     parser.add_argument("--results-dir", default="sae/results")
+    parser.add_argument("--checkpoint-name", default="model.pt")
     parser.add_argument("--dict-size", type=int, default=None)
     parser.add_argument("--k", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=None)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--aux-k-coef", type=float, default=None)
+    parser.add_argument("--basis-score-coef", type=float, default=None)
+    parser.add_argument("--sparsity-mode", default=None, choices=[None, "topk", "batch_topk"])
     parser.add_argument("--device", default="auto")
     return parser.parse_args()
 
@@ -55,13 +58,20 @@ def resolve_config(args: argparse.Namespace) -> dict:
         train_cfg["max_steps"] = args.max_steps
     if args.aux_k_coef is not None:
         train_cfg["aux_k_coef"] = args.aux_k_coef
-    # Defaults for improved training knobs (backward compatible if missing).
+    if args.basis_score_coef is not None:
+        train_cfg["basis_score_coef"] = args.basis_score_coef
+    if args.sparsity_mode is not None:
+        train_cfg["sparsity_mode"] = args.sparsity_mode
+
     train_cfg.setdefault("aux_k_coef", 0.03125)
+    train_cfg.setdefault("basis_score_coef", 0.0)
     train_cfg.setdefault("dead_feature_threshold", 1.0e-5)
     train_cfg.setdefault("normalize_decoder", True)
     train_cfg.setdefault("center_inputs", True)
     train_cfg.setdefault("activation_ema_beta", 0.99)
-    train_cfg.setdefault("aux_k", train_cfg.get("k", config.get("k", 64)))
+    train_cfg.setdefault("sparsity_mode", "topk")
+    train_cfg.setdefault("aux_k", int(config.get("k", 64)))
+    train_cfg.setdefault("canonical_lore_run_key", config.get("canonical_lore_run_key", "PART2_K10_seed42"))
     config["data"] = data_cfg
     config["training"] = train_cfg
     return config
@@ -75,6 +85,18 @@ def choose_device(name: str) -> torch.device:
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+def load_basis_v(path: str | Path, run_key: str, device: torch.device) -> torch.Tensor | None:
+    path = Path(path)
+    if not path.exists():
+        print(f"warning: basis matrices not found at {path}; basis-score loss disabled")
+        return None
+    matrices = torch.load(path, map_location="cpu")
+    if run_key not in matrices:
+        print(f"warning: run key {run_key} missing from {path}; basis-score loss disabled")
+        return None
+    return matrices[run_key]["V"].float().to(device)
 
 
 def main() -> int:
@@ -101,11 +123,21 @@ def main() -> int:
         k=int(config["k"]),
         normalize_decoder=bool(train_cfg["normalize_decoder"]),
         aux_k=int(train_cfg.get("aux_k", config["k"])),
+        sparsity_mode=str(train_cfg["sparsity_mode"]),
     ).to(device)
 
     if bool(train_cfg["center_inputs"]):
         train_mean = train_x.mean(dim=0)
         model.set_pre_bias(train_mean.to(device))
+
+    basis_score_coef = float(train_cfg["basis_score_coef"])
+    basis_v = None
+    if basis_score_coef > 0.0:
+        basis_path = config["data"].get("basis_matrices_path", "PRISM/basis_matrices.pt")
+        run_key = str(train_cfg.get("canonical_lore_run_key", config.get("canonical_lore_run_key")))
+        basis_v = load_basis_v(basis_path, run_key, device)
+        if basis_v is None:
+            basis_score_coef = 0.0
 
     optimizer = torch.optim.Adam(model.parameters(), lr=float(train_cfg["learning_rate"]))
 
@@ -117,14 +149,15 @@ def main() -> int:
     dead_threshold = float(train_cfg["dead_feature_threshold"])
     ema_beta = float(train_cfg["activation_ema_beta"])
 
-    # EMA of fraction of examples where each feature is active.
     act_freq_ema = torch.zeros(model.dict_size, device=device)
+    ckpt_path = checkpoint_dir / args.checkpoint_name
 
     log_path = results_dir / "train_log.csv"
     fieldnames = [
         "step",
         "train_mse",
         "train_aux_mse",
+        "train_basis_mse",
         "train_loss",
         "dead_feature_rate",
         "live_features",
@@ -147,6 +180,8 @@ def main() -> int:
                     batch,
                     dead_mask=dead_mask,
                     aux_k_coef=aux_k_coef,
+                    basis_v=basis_v,
+                    basis_score_coef=basis_score_coef,
                 )
                 out["loss"].backward()
                 optimizer.step()
@@ -175,6 +210,7 @@ def main() -> int:
                             "step": step,
                             "train_mse": float(out["recon_mse"].item()),
                             "train_aux_mse": float(out["aux_mse"].item()),
+                            "train_basis_mse": float(out["basis_mse"].item()),
                             "train_loss": float(out["loss"].item()),
                             "dead_feature_rate": dead_rate,
                             "live_features": live_features,
@@ -185,8 +221,9 @@ def main() -> int:
                     f.flush()
                     if should_eval:
                         print(
-                            f"step={step} recon_mse={float(out['recon_mse'].item()):.5f} "
-                            f"aux_mse={float(out['aux_mse'].item()):.5f} "
+                            f"step={step} recon={float(out['recon_mse'].item()):.5f} "
+                            f"aux={float(out['aux_mse'].item()):.5f} "
+                            f"basis={float(out['basis_mse'].item()):.5f} "
                             f"dead={dead_rate:.4f} live={live_features} "
                             f"val_mse={val_mse} val_ev={val_ev}"
                         )
@@ -198,7 +235,7 @@ def main() -> int:
                             "step": step,
                             "act_freq_ema": act_freq_ema.detach().cpu(),
                         },
-                        checkpoint_dir / "topk_sae_baseline.pt",
+                        ckpt_path,
                     )
                 if step >= max_steps:
                     break
@@ -210,11 +247,11 @@ def main() -> int:
             "step": step,
             "act_freq_ema": act_freq_ema.detach().cpu(),
         },
-        checkpoint_dir / "topk_sae_baseline.pt",
+        ckpt_path,
     )
     write_json(results_dir / "train_config_resolved.json", config)
-    print(f"trained TopKSAE for {step} steps on {device}")
-    print(f"wrote checkpoint to {checkpoint_dir / 'topk_sae_baseline.pt'}")
+    print(f"trained TopKSAE for {step} steps on {device} mode={train_cfg['sparsity_mode']}")
+    print(f"wrote checkpoint to {ckpt_path}")
     print(f"wrote train log to {log_path}")
     return 0
 

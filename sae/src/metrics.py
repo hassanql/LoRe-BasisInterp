@@ -20,6 +20,27 @@ def active_feature_counts(z: torch.Tensor) -> torch.Tensor:
     return (z != 0).sum(dim=-1)
 
 
+def gini_coefficient(values: torch.Tensor) -> float:
+    """Gini coefficient of a non-negative 1D distribution.
+
+    0 = perfectly equal usage across features.
+    1 = one feature owns all mass (maximum inequality).
+    """
+    x = values.detach().float().flatten()
+    x = torch.clamp(x, min=0.0)
+    if x.numel() == 0:
+        return float("nan")
+    total = float(x.sum().item())
+    if total <= 0.0:
+        return 0.0
+    x_sorted, _ = torch.sort(x)
+    n = x_sorted.numel()
+    index = torch.arange(1, n + 1, device=x_sorted.device, dtype=x_sorted.dtype)
+    # Standard sorted Gini: (2 * sum(i * x_i)) / (n * sum(x)) - (n + 1) / n
+    gini = (2.0 * (index * x_sorted).sum() / (n * x_sorted.sum())) - (n + 1.0) / n
+    return float(gini.clamp(0.0, 1.0).item())
+
+
 def pearson_corr_by_column(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     x_centered = x - x.mean(dim=0, keepdim=True)
     y_centered = y - y.mean(dim=0, keepdim=True)
