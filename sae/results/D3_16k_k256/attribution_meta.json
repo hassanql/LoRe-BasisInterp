@@ -1,4 +1,5 @@
 {
+  "canonical_run": "PART2_K10_seed42",
   "decoder_weight_shape": [
     4096,
     16384
@@ -7,14 +8,51 @@
     4096,
     10
   ],
-  "alignment_shape": [
-    16384,
-    10
+  "V_column_norms": [
+    1630.3802490234375,
+    846.4402465820312,
+    1628.091796875,
+    1591.858642578125,
+    1592.755859375,
+    1634.5352783203125,
+    1613.534423828125,
+    1605.46630859375,
+    1638.5860595703125,
+    948.3907470703125
   ],
+  "max_user_weight_per_basis": [
+    9.079538898504325e-09,
+    1.0,
+    1.7388273931828735e-08,
+    1.0,
+    4.646866447188813e-09,
+    7.665421186686672e-09,
+    7.719812344930688e-09,
+    1.1649289533011142e-08,
+    1.2346229816273535e-08,
+    1.0
+  ],
+  "operational_kept_rule": "max_user_weight >= 1e-2 (same as evaluate_sae.personalized_lore_accuracy)",
+  "operational_kept_basis_ids": [
+    1,
+    3,
+    9
+  ],
+  "bases_kept_metadata_field": 3,
   "n_test_embeddings_used": 5218,
   "top_n_per_sign": 50,
-  "note": "alignment_ij = decoder_column_i \u00b7 V[:, j]; contribution uses mean |z_i| on test",
-  "V_column_norms_note": "PART2_K10_seed42 V columns are not unit-norm (~1.4e3); raw alignment = decoder_i \u00b7 V[:,j] is large but ranking per basis is invariant to V_j scale.",
-  "ranking_note": "Top 50 pos/neg per basis by alignment only (not by contribution). Attribution is geometric, not causal.",
-  "formula": "alignment_ij = decoder.weight[:,i] \u00b7 V[:,j]; mean_abs_contribution_ij = mean(|z_i|) * |alignment_ij| on test"
+  "primary_sort": "mean_abs_contribution descending within sign(alignment)",
+  "formulas": {
+    "alignment_ij": "decoder.weight[:, i] \u00b7 V[:, j]",
+    "cosine_alignment_ij": "decoder.weight[:, i] \u00b7 (V[:, j] / ||V[:, j]||)  (decoder columns unit-norm)",
+    "mean_abs_activation_i": "mean_e |z_i(e)| on test",
+    "activation_frequency_i": "mean_e 1[|z_i(e)| > 0] on test",
+    "mean_abs_contribution_ij": "mean_abs_activation_i * |alignment_ij|"
+  },
+  "scope_note": "All 10 V columns remain in the LoRe model matrix. Only operational_kept bases have non-negligible user weights and are used for personalized LoRe preference accuracy. Primary report: operational bases; full 10-basis table is supplementary.",
+  "ranking_note": "Ranked by mean absolute contribution, not raw alignment. Positive/negative split by sign of alignment. Attribution is observational, not causal.",
+  "files": {
+    "all_bases": "sae/results/D3_16k_k256/top_features_per_basis.csv",
+    "operational_primary": "sae/results/D3_16k_k256/top_features_per_basis_operational.csv"
+  }
 }

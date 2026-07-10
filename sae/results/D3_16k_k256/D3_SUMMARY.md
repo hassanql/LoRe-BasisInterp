@@ -51,6 +51,55 @@
 
 ## One-line takeaway
 
-**D3 passes LoRe preservation but has high feature-usage inequality.**
+**D3 is LoRe-faithful but has concentrated feature usage.**
 
 Live Gini (test) ≈ **0.910**; top 5% of features carry ≈ **86%** of activation mass.
+D3 remains the frozen LoRe-preserving SAE champion; Gini is a secondary diagnostic, not a fail gate.
+
+## LoRe basis scope (important)
+
+Canonical run `PART2_K10_seed42` stores **all 10** columns of `V` (`[4096, 10]`).
+
+**Operational kept bases** use the same rule as LoRe preference accuracy in `evaluate_sae.py`:
+
+```text
+kept if max_user_weight_j >= 1e-2
+```
+
+For this checkpoint of `W`:
+
+| basis_id | max user weight | operational? |
+|---------:|----------------:|:------------:|
+| 0 | ~0 | no |
+| **1** | **1.0** | **yes** |
+| 2 | ~0 | no |
+| **3** | **1.0** | **yes** |
+| 4–8 | ~0 | no |
+| **9** | **1.0** | **yes** |
+
+So: **all 10 bases remain in the model matrix**; **3 bases (1, 3, 9) are operationally active** for personalized LoRe scores. Metadata field `bases_kept = 3` matches this.
+
+- Primary attribution report: `top_features_per_basis_operational.csv` (bases 1, 3, 9)
+- Supplementary (all 10): `top_features_per_basis.csv`
+
+## Feature attribution (cleaned)
+
+Ranked by **mean absolute contribution**, not raw alignment:
+
+```text
+alignment_ij          = decoder_i · V[:, j]
+cosine_alignment_ij   = decoder_i · unit(V[:, j])   # decoder already unit-norm
+mean_abs_activation_i = mean |z_i|
+activation_frequency_i= mean 1[|z_i| > 0]
+mean_abs_contribution = mean_abs_activation_i * |alignment_ij|
+```
+
+Within each basis, top 50 **positive** and top 50 **negative** features (by sign of alignment), sorted by contribution.
+
+CSV columns: `basis_id, is_operational_kept, max_user_weight, rank, sign, feature_id, alignment, cosine_alignment, mean_abs_activation, activation_frequency, mean_abs_contribution`.
+
+**Notes:**
+- Attribution is observational (reward-lens style projection), **not causal**.
+- No semantic feature names.
+- Unit-normalizing `V` changes score scale across bases but **not** feature order within one basis.
+- Feature **2260** still ranks high by contribution on operational bases (high activation × high alignment); inactive near-zero features no longer dominate the negative list.
